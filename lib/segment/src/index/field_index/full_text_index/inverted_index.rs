@@ -76,6 +76,13 @@ impl InvertedIndex {
             InvertedIndex::Mutable(index) => &mut index.vocab,
             InvertedIndex::Immutable(index) => &mut index.vocab,
         };
+        Self::document_from_tokens_impl(vocab, tokens)
+    }
+
+    fn document_from_tokens_impl(
+        vocab: &mut HashMap<String, TokenId>,
+        tokens: &BTreeSet<String>,
+    ) -> Document {
         let mut document_tokens = vec![];
         for token in tokens {
             // check if in vocab
@@ -260,7 +267,7 @@ impl InvertedIndex {
         let mut index = MutableInvertedIndex::default();
         for i in iter {
             let (idx, tokens) = i?;
-            let doc = self.document_from_tokens(&tokens);
+            let doc = Self::document_from_tokens_impl(&mut index.vocab, &tokens);
             index.index_document(idx, doc)?;
         }
 
