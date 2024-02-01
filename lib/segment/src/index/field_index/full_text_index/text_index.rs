@@ -237,6 +237,7 @@ impl PayloadFieldIndex for FullTextIndex {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
     use tempfile::Builder;
 
     use super::*;
@@ -259,8 +260,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_full_text_indexing() {
+    #[rstest]
+    #[case(true)]
+    #[case(false)]
+    fn test_full_text_indexing(#[case] immutable: bool) {
         let payloads: Vec<_> = vec![
             serde_json::json!("The celebration had a long way to go and even in the silent depths of Multivac's underground chambers, it hung in the air."),
             serde_json::json!("If nothing else, there was the mere fact of isolation and silence."),
@@ -334,7 +337,7 @@ mod tests {
 
         {
             let db = open_db_with_existing_cf(&temp_dir.path().join("test_db")).unwrap();
-            let mut index = FullTextIndex::new(db, config, "text", true);
+            let mut index = FullTextIndex::new(db, config, "text", immutable);
             let loaded = index.load().unwrap();
             assert!(loaded);
 
