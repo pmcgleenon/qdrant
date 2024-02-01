@@ -63,12 +63,14 @@ smol_str = { version = "0.2.1", features = ["serde"] }
 lazy_static = "1.4"
 fnv = { workspace = true }
 indexmap = { workspace = true }
+http = "1.0.0"
 
 sysinfo = "0.30"
 charabia = { version = "0.8.5", default-features = false, features = ["greek", "hebrew", "thai"] }
 
 common = { path = "../common/common" }
 io = { path = "../common/io" }
+issues = { path = "../common/issues" }
 memory = { path = "../common/memory" }
 sparse = { path = "../sparse" }
 
