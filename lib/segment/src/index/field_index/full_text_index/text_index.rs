@@ -350,6 +350,23 @@ mod tests {
             let filter_condition = filter_request("the");
             let search_res: Vec<_> = index.filter(&filter_condition).unwrap().collect();
             assert_eq!(search_res, vec![0, 1, 3, 4]);
+
+            // check deletion
+            index.remove_point(0).unwrap();
+            let filter_condition = filter_request("multivac");
+            let search_res: Vec<_> = index.filter(&filter_condition).unwrap().collect();
+            assert!(search_res.is_empty());
+            assert_eq!(index.count_indexed_points(), 3);
+
+            index.remove_point(3).unwrap();
+            let filter_condition = filter_request("the");
+            let search_res: Vec<_> = index.filter(&filter_condition).unwrap().collect();
+            assert_eq!(search_res, vec![1, 4]);
+            assert_eq!(index.count_indexed_points(), 2);
+
+            // check deletion of non-existing point
+            index.remove_point(3).unwrap();
+            assert_eq!(index.count_indexed_points(), 2);
         }
     }
 }

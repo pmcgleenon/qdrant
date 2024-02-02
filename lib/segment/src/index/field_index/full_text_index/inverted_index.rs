@@ -144,7 +144,23 @@ impl InvertedIndex {
             // Empty request -> no matches
             return Box::new(vec![].into_iter());
         }
-        intersect_postings_iterator(postings)
+
+        match self {
+            InvertedIndex::Mutable(_index) => {
+                // in case of mutable index, deleted documents are removed from the postings
+                intersect_postings_iterator(postings, |_| true)
+            }
+            InvertedIndex::Immutable(index) => {
+                // in case of immutable index, deleted documents are still in the postings
+                let filter = move |idx| {
+                    matches!(
+                        index.point_documents_tokens.get(idx as usize),
+                        Some(Some(_))
+                    )
+                };
+                intersect_postings_iterator(postings, filter)
+            }
+        }
     }
 
     pub fn estimate_cardinality(
@@ -438,6 +454,7 @@ impl ImmutableInvertedIndex {
         if parsed_query.tokens.contains(&None) {
             return false;
         }
+        // check presence of the document
         if self.values_is_empty(point_id) {
             return false;
         }
