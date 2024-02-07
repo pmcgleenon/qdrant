@@ -35,19 +35,35 @@ impl PostingList {
         self.list.binary_search(val).is_ok()
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = PointOffsetType> + '_ {
+        self.list.iter().copied()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CompressedPostingList {
+    list: Vec<PointOffsetType>,
+}
+
+impl CompressedPostingList {
+    pub fn new(posting_list: PostingList) -> Self {
+        Self {
+            list: posting_list.list,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.list.len()
+    }
+
+    pub fn contains(&self, val: &PointOffsetType) -> bool {
+        self.list.binary_search(val).is_ok()
+    }
+
     pub fn iter<'a>(
         &'a self,
         filter: impl Fn(PointOffsetType) -> bool + 'a,
     ) -> impl Iterator<Item = PointOffsetType> + 'a {
         self.list.iter().copied().filter(move |&idx| filter(idx))
-    }
-}
-
-impl IntoIterator for PostingList {
-    type Item = PointOffsetType;
-    type IntoIter = std::vec::IntoIter<Self::Item>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.list.into_iter()
     }
 }

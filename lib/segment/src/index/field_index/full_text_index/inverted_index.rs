@@ -3,8 +3,10 @@ use std::collections::{BTreeSet, HashMap};
 use common::types::PointOffsetType;
 use serde::{Deserialize, Serialize};
 
-use super::posting_list::PostingList;
-use super::postings_iterator::intersect_postings_iterator;
+use super::posting_list::{CompressedPostingList, PostingList};
+use super::postings_iterator::{
+    intersect_compressed_postings_iterator, intersect_postings_iterator,
+};
 use crate::common::operation_error::{OperationError, OperationResult};
 use crate::index::field_index::{CardinalityEstimation, PayloadBlockCondition, PrimaryCondition};
 use crate::types::{FieldCondition, Match, MatchText, PayloadKeyType};
@@ -121,45 +123,9 @@ impl InvertedIndex {
     }
 
     pub fn filter(&self, query: &ParsedQuery) -> Box<dyn Iterator<Item = PointOffsetType> + '_> {
-        let index_postings = match self {
-            InvertedIndex::Mutable(index) => &index.postings,
-            InvertedIndex::Immutable(index) => &index.postings,
-        };
-        let postings_opt: Option<Vec<_>> = query
-            .tokens
-            .iter()
-            .map(|&vocab_idx| match vocab_idx {
-                None => None,
-                // if a ParsedQuery token was given an index, then it must exist in the vocabulary
-                // dictionary. Posting list entry can be None but it exists.
-                Some(idx) => index_postings.get(idx as usize).unwrap().as_ref(),
-            })
-            .collect();
-        if postings_opt.is_none() {
-            // There are unseen tokens -> no matches
-            return Box::new(vec![].into_iter());
-        }
-        let postings = postings_opt.unwrap();
-        if postings.is_empty() {
-            // Empty request -> no matches
-            return Box::new(vec![].into_iter());
-        }
-
         match self {
-            InvertedIndex::Mutable(_index) => {
-                // in case of mutable index, deleted documents are removed from the postings
-                intersect_postings_iterator(postings, |_| true)
-            }
-            InvertedIndex::Immutable(index) => {
-                // in case of immutable index, deleted documents are still in the postings
-                let filter = move |idx| {
-                    matches!(
-                        index.point_documents_tokens.get(idx as usize),
-                        Some(Some(_))
-                    )
-                };
-                intersect_postings_iterator(postings, filter)
-            }
+            InvertedIndex::Mutable(index) => index.filter(query),
+            InvertedIndex::Immutable(index) => index.filter(query),
         }
     }
 
@@ -172,17 +138,26 @@ impl InvertedIndex {
             InvertedIndex::Mutable(index) => index.points_count,
             InvertedIndex::Immutable(index) => index.points_count,
         };
-        let index_postings = match self {
-            InvertedIndex::Mutable(index) => &index.postings,
-            InvertedIndex::Immutable(index) => &index.postings,
-        };
         let postings_opt: Option<Vec<_>> = query
             .tokens
             .iter()
             .map(|&vocab_idx| match vocab_idx {
                 None => None,
                 // unwrap safety: same as in filter()
-                Some(idx) => index_postings.get(idx as usize).unwrap().as_ref(),
+                Some(idx) => match &self {
+                    Self::Mutable(index) => index
+                        .postings
+                        .get(idx as usize)
+                        .unwrap()
+                        .as_ref()
+                        .map(|p| p.len()),
+                    Self::Immutable(index) => index
+                        .postings
+                        .get(idx as usize)
+                        .unwrap()
+                        .as_ref()
+                        .map(|p| p.len()),
+                },
             })
             .collect();
         if postings_opt.is_none() {
@@ -205,7 +180,7 @@ impl InvertedIndex {
             };
         }
         // Smallest posting is the largest possible cardinality
-        let smallest_posting = postings.iter().map(|posting| posting.len()).min().unwrap();
+        let smallest_posting = postings.iter().cloned().min().unwrap();
 
         return if postings.len() == 1 {
             CardinalityEstimation {
@@ -217,7 +192,7 @@ impl InvertedIndex {
         } else {
             let expected_frac: f64 = postings
                 .iter()
-                .map(|posting| posting.len() as f64 / points_count as f64)
+                .map(|posting| *posting as f64 / points_count as f64)
                 .product();
             let exp = (expected_frac * points_count as f64) as usize;
             CardinalityEstimation {
@@ -234,36 +209,13 @@ impl InvertedIndex {
         threshold: usize,
         key: PayloadKeyType,
     ) -> Box<dyn Iterator<Item = PayloadBlockCondition> + '_> {
-        // It might be very hard to predict possible combinations of conditions,
-        // so we only build it for individual tokens
-        let vocab = match self {
-            InvertedIndex::Mutable(index) => &index.vocab,
-            InvertedIndex::Immutable(index) => &index.vocab,
-        };
-        let postings = match self {
-            InvertedIndex::Mutable(index) => &index.postings,
-            InvertedIndex::Immutable(index) => &index.postings,
-        };
-        Box::new(
-            vocab
-                .iter()
-                .filter(|(_token, &posting_idx)| postings[posting_idx as usize].is_some())
-                .filter(move |(_token, &posting_idx)| {
-                    // unwrap crash safety: all tokens that passes the first filter should have postings
-                    postings[posting_idx as usize].as_ref().unwrap().len() >= threshold
-                })
-                .map(|(token, &posting_idx)| {
-                    (
-                        token,
-                        // same as the above case
-                        postings[posting_idx as usize].as_ref().unwrap(),
-                    )
-                })
-                .map(move |(token, posting)| PayloadBlockCondition {
+        let map_filter_condition = move |(token, postings): (&str, usize)| {
+            if postings >= threshold {
+                Some(PayloadBlockCondition {
                     condition: FieldCondition {
                         key: key.clone(),
                         r#match: Some(Match::Text(MatchText {
-                            text: token.clone(),
+                            text: token.to_owned(),
                         })),
                         range: None,
                         geo_bounding_box: None,
@@ -271,9 +223,27 @@ impl InvertedIndex {
                         geo_polygon: None,
                         values_count: None,
                     },
-                    cardinality: posting.len(),
-                }),
-        )
+                    cardinality: postings,
+                })
+            } else {
+                None
+            }
+        };
+
+        // It might be very hard to predict possible combinations of conditions,
+        // so we only build it for individual tokens
+        match &self {
+            InvertedIndex::Mutable(index) => Box::new(
+                index
+                    .vocab_with_positngs_len_iter()
+                    .filter_map(map_filter_condition),
+            ),
+            InvertedIndex::Immutable(index) => Box::new(
+                index
+                    .vocab_with_positngs_len_iter()
+                    .filter_map(map_filter_condition),
+            ),
+        }
     }
 
     pub fn build_index(
@@ -416,11 +386,45 @@ impl MutableInvertedIndex {
     fn get_doc(&self, idx: PointOffsetType) -> Option<&Document> {
         self.point_to_docs.get(idx as usize)?.as_ref()
     }
+
+    pub fn filter(&self, query: &ParsedQuery) -> Box<dyn Iterator<Item = PointOffsetType> + '_> {
+        let postings_opt: Option<Vec<_>> = query
+            .tokens
+            .iter()
+            .map(|&vocab_idx| match vocab_idx {
+                None => None,
+                // if a ParsedQuery token was given an index, then it must exist in the vocabulary
+                // dictionary. Posting list entry can be None but it exists.
+                Some(idx) => self.postings.get(idx as usize).unwrap().as_ref(),
+            })
+            .collect();
+        if postings_opt.is_none() {
+            // There are unseen tokens -> no matches
+            return Box::new(vec![].into_iter());
+        }
+        let postings = postings_opt.unwrap();
+        if postings.is_empty() {
+            // Empty request -> no matches
+            return Box::new(vec![].into_iter());
+        }
+
+        intersect_postings_iterator(postings)
+    }
+
+    fn vocab_with_positngs_len_iter(&self) -> impl Iterator<Item = (&str, usize)> + '_ {
+        self.vocab.iter().filter_map(|(token, &posting_idx)| {
+            if let Some(Some(postings)) = self.postings.get(posting_idx as usize) {
+                Some((token.as_str(), postings.len()))
+            } else {
+                None
+            }
+        })
+    }
 }
 
 #[derive(Default)]
 pub struct ImmutableInvertedIndex {
-    postings: Vec<Option<PostingList>>,
+    postings: Vec<Option<CompressedPostingList>>,
     vocab: HashMap<String, TokenId>,
     point_documents_tokens: Vec<Option<usize>>,
     points_count: usize,
@@ -471,12 +475,53 @@ impl ImmutableInvertedIndex {
                 }
             })
     }
+
+    pub fn filter(&self, query: &ParsedQuery) -> Box<dyn Iterator<Item = PointOffsetType> + '_> {
+        let postings_opt: Option<Vec<_>> = query
+            .tokens
+            .iter()
+            .map(|&vocab_idx| match vocab_idx {
+                None => None,
+                // if a ParsedQuery token was given an index, then it must exist in the vocabulary
+                // dictionary. Posting list entry can be None but it exists.
+                Some(idx) => self.postings.get(idx as usize).unwrap().as_ref(),
+            })
+            .collect();
+        if postings_opt.is_none() {
+            // There are unseen tokens -> no matches
+            return Box::new(vec![].into_iter());
+        }
+        let postings = postings_opt.unwrap();
+        if postings.is_empty() {
+            // Empty request -> no matches
+            return Box::new(vec![].into_iter());
+        }
+
+        // in case of immutable index, deleted documents are still in the postings
+        let filter =
+            move |idx| matches!(self.point_documents_tokens.get(idx as usize), Some(Some(_)));
+        intersect_compressed_postings_iterator(postings, filter)
+    }
+
+    fn vocab_with_positngs_len_iter(&self) -> impl Iterator<Item = (&str, usize)> + '_ {
+        self.vocab.iter().filter_map(|(token, &posting_idx)| {
+            if let Some(Some(postings)) = self.postings.get(posting_idx as usize) {
+                Some((token.as_str(), postings.len()))
+            } else {
+                None
+            }
+        })
+    }
 }
 
 impl From<MutableInvertedIndex> for ImmutableInvertedIndex {
     fn from(index: MutableInvertedIndex) -> Self {
         ImmutableInvertedIndex {
-            postings: index.postings,
+            postings: index
+                .postings
+                .into_iter()
+                .map(|x| x.map(CompressedPostingList::new))
+                .collect(),
             vocab: index.vocab,
             point_documents_tokens: index
                 .point_to_docs
