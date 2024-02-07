@@ -8586,11 +8586,13 @@
             "minimum": 0
           },
           "from": {
+            "description": "Source peer id",
             "type": "integer",
             "format": "uint64",
             "minimum": 0
           },
           "to": {
+            "description": "Destination peer id",
             "type": "integer",
             "format": "uint64",
             "minimum": 0
@@ -8608,6 +8610,32 @@
                 "nullable": true
               }
             ]
+          },
+          "started_at": {
+            "description": "Time when the transfer was started. Available only on the source peer.",
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "points_transferred": {
+            "description": "Amount of points transferred. Available only on the source peer.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "nullable": true
+          },
+          "points_total": {
+            "description": "Total amount of points to transfer. Available only on the source peer.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "nullable": true
+          },
+          "eta_seconds": {
+            "description": "Estimated time of arrival. Available only on the source peer.",
+            "type": "number",
+            "format": "double",
+            "nullable": true
           }
         }
       },

@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+use parking_lot::Mutex;
+
+use super::transfer_tasks_pool::TransferTaskProgress;
 use crate::operations::types::{CollectionError, CollectionResult};
 use crate::shards::remote_shard::RemoteShard;
 use crate::shards::shard::ShardId;
@@ -20,6 +23,7 @@ const TRANSFER_BATCH_SIZE: usize = 100;
 /// This function is cancel safe.
 pub(super) async fn transfer_stream_records(
     shard_holder: Arc<LockedShardHolder>,
+    progress: Arc<Mutex<TransferTaskProgress>>,
     shard_id: ShardId,
     remote_shard: RemoteShard,
 ) -> CollectionResult<()> {
@@ -37,7 +41,13 @@ pub(super) async fn transfer_stream_records(
             )));
         };
 
-        replica_set.proxify_local(remote_shard).await?;
+        let points_count = replica_set
+            .proxify_local(remote_shard)
+            .await?
+            .wrapped_shard
+            .read_filtered(None)?
+            .len();
+        progress.lock().points_total = points_count;
 
         replica_set.transfer_indexes().await?;
     }
@@ -61,6 +71,14 @@ pub(super) async fn transfer_stream_records(
         offset = replica_set
             .transfer_batch(offset, TRANSFER_BATCH_SIZE)
             .await?;
+
+        {
+            let mut progress = progress.lock();
+            let transferred =
+                (progress.points_transferred + TRANSFER_BATCH_SIZE).min(progress.points_total);
+            progress.points_transferred = transferred;
+            progress.eta.set_progress(transferred);
+        }
 
         if offset.is_none() {
             // That was the last batch, all look good

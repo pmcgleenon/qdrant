@@ -1,6 +1,7 @@
 use std::ops::Deref as _;
 
 use segment::types::PointIdType;
+use tokio::sync::{RwLockReadGuard, RwLockWriteGuard};
 
 use super::ShardReplicaSet;
 use crate::operations::types::{CollectionError, CollectionResult};
@@ -10,10 +11,15 @@ use crate::shards::remote_shard::RemoteShard;
 use crate::shards::shard::Shard;
 
 impl ShardReplicaSet {
+    /// Convert `Local` shard into `ForwardProxy` shard and return a reference to it.
+    ///
     /// # Cancel safety
     ///
     /// This method is cancel safe.
-    pub async fn proxify_local(&self, remote_shard: RemoteShard) -> CollectionResult<()> {
+    pub async fn proxify_local(
+        &self,
+        remote_shard: RemoteShard,
+    ) -> CollectionResult<RwLockReadGuard<ForwardProxyShard>> {
         let mut local = self.local.write().await;
 
         match local.deref() {
@@ -24,7 +30,13 @@ impl ShardReplicaSet {
             Some(Shard::ForwardProxy(proxy))
                 if proxy.remote_shard.peer_id == remote_shard.peer_id =>
             {
-                return Ok(())
+                return Ok(RwLockWriteGuard::downgrade_map(
+                    local,
+                    |local| match local {
+                        Some(Shard::ForwardProxy(ref proxy)) => proxy,
+                        _ => unreachable!(),
+                    },
+                ));
             }
 
             // Unexpected states, error
@@ -71,7 +83,13 @@ impl ShardReplicaSet {
         let proxy_shard = ForwardProxyShard::new(local_shard, remote_shard);
         let _ = local.insert(Shard::ForwardProxy(proxy_shard));
 
-        Ok(())
+        Ok(RwLockWriteGuard::downgrade_map(
+            local,
+            |local| match local {
+                Some(Shard::ForwardProxy(ref proxy)) => proxy,
+                _ => unreachable!(),
+            },
+        ))
     }
 
     /// # Cancel safety
