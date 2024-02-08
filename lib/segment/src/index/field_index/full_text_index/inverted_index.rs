@@ -132,13 +132,9 @@ impl InvertedIndex {
         query: &ParsedQuery,
         condition: &FieldCondition,
     ) -> CardinalityEstimation {
-        let points_count = match self {
-            InvertedIndex::Mutable(index) => index.points_count,
-            InvertedIndex::Immutable(index) => index.points_count,
-        };
-        let index_postings = match self {
-            InvertedIndex::Mutable(index) => &index.postings,
-            InvertedIndex::Immutable(index) => &index.postings,
+        let (points_count, index_postings) = match self {
+            InvertedIndex::Mutable(index) => (index.points_count, &index.postings),
+            InvertedIndex::Immutable(index) => (index.points_count, &index.postings),
         };
         let postings_opt: Option<Vec<_>> = query
             .tokens
