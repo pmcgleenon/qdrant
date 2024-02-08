@@ -121,45 +121,9 @@ impl InvertedIndex {
     }
 
     pub fn filter(&self, query: &ParsedQuery) -> Box<dyn Iterator<Item = PointOffsetType> + '_> {
-        let index_postings = match self {
-            InvertedIndex::Mutable(index) => &index.postings,
-            InvertedIndex::Immutable(index) => &index.postings,
-        };
-        let postings_opt: Option<Vec<_>> = query
-            .tokens
-            .iter()
-            .map(|&vocab_idx| match vocab_idx {
-                None => None,
-                // if a ParsedQuery token was given an index, then it must exist in the vocabulary
-                // dictionary. Posting list entry can be None but it exists.
-                Some(idx) => index_postings.get(idx as usize).unwrap().as_ref(),
-            })
-            .collect();
-        if postings_opt.is_none() {
-            // There are unseen tokens -> no matches
-            return Box::new(vec![].into_iter());
-        }
-        let postings = postings_opt.unwrap();
-        if postings.is_empty() {
-            // Empty request -> no matches
-            return Box::new(vec![].into_iter());
-        }
-
         match self {
-            InvertedIndex::Mutable(_index) => {
-                // in case of mutable index, deleted documents are removed from the postings
-                intersect_postings_iterator(postings, |_| true)
-            }
-            InvertedIndex::Immutable(index) => {
-                // in case of immutable index, deleted documents are still in the postings
-                let filter = move |idx| {
-                    matches!(
-                        index.point_documents_tokens.get(idx as usize),
-                        Some(Some(_))
-                    )
-                };
-                intersect_postings_iterator(postings, filter)
-            }
+            InvertedIndex::Mutable(index) => index.filter(query),
+            InvertedIndex::Immutable(index) => index.filter(query),
         }
     }
 
@@ -236,13 +200,9 @@ impl InvertedIndex {
     ) -> Box<dyn Iterator<Item = PayloadBlockCondition> + '_> {
         // It might be very hard to predict possible combinations of conditions,
         // so we only build it for individual tokens
-        let vocab = match self {
-            InvertedIndex::Mutable(index) => &index.vocab,
-            InvertedIndex::Immutable(index) => &index.vocab,
-        };
-        let postings = match self {
-            InvertedIndex::Mutable(index) => &index.postings,
-            InvertedIndex::Immutable(index) => &index.postings,
+        let (vocab, postings) = match self {
+            InvertedIndex::Mutable(index) => (&index.vocab, &index.postings),
+            InvertedIndex::Immutable(index) => (&index.vocab, &index.postings),
         };
         Box::new(
             vocab
@@ -344,7 +304,7 @@ pub struct MutableInvertedIndex {
 }
 
 impl MutableInvertedIndex {
-    pub fn index_document(
+    fn index_document(
         &mut self,
         idx: PointOffsetType,
         document: Document,
@@ -374,7 +334,7 @@ impl MutableInvertedIndex {
         Ok(())
     }
 
-    pub fn remove_document(&mut self, idx: PointOffsetType) -> bool {
+    fn remove_document(&mut self, idx: PointOffsetType) -> bool {
         if self.point_to_docs.len() <= idx as usize {
             return false; // Already removed or never actually existed
         }
@@ -396,16 +356,39 @@ impl MutableInvertedIndex {
         true
     }
 
-    pub fn values_count(&self, point_id: PointOffsetType) -> usize {
+    fn filter(&self, query: &ParsedQuery) -> Box<dyn Iterator<Item = PointOffsetType> + '_> {
+        let postings_opt: Option<Vec<_>> = query
+            .tokens
+            .iter()
+            .map(|&vocab_idx| match vocab_idx {
+                None => None,
+                // if a ParsedQuery token was given an index, then it must exist in the vocabulary
+                // dictionary. Posting list entry can be None but it exists.
+                Some(idx) => self.postings.get(idx as usize).unwrap().as_ref(),
+            })
+            .collect();
+        if postings_opt.is_none() {
+            // There are unseen tokens -> no matches
+            return Box::new(vec![].into_iter());
+        }
+        let postings = postings_opt.unwrap();
+        if postings.is_empty() {
+            // Empty request -> no matches
+            return Box::new(vec![].into_iter());
+        }
+        intersect_postings_iterator(postings, |_| true)
+    }
+
+    fn values_count(&self, point_id: PointOffsetType) -> usize {
         // Maybe we want number of documents in the future?
         self.get_doc(point_id).map(|x| x.len()).unwrap_or(0)
     }
 
-    pub fn values_is_empty(&self, point_id: PointOffsetType) -> bool {
+    fn values_is_empty(&self, point_id: PointOffsetType) -> bool {
         self.get_doc(point_id).map(|x| x.is_empty()).unwrap_or(true)
     }
 
-    pub fn check_match(&self, parsed_query: &ParsedQuery, point_id: PointOffsetType) -> bool {
+    fn check_match(&self, parsed_query: &ParsedQuery, point_id: PointOffsetType) -> bool {
         if let Some(doc) = self.get_doc(point_id) {
             parsed_query.check_match(doc)
         } else {
@@ -427,7 +410,7 @@ pub struct ImmutableInvertedIndex {
 }
 
 impl ImmutableInvertedIndex {
-    pub fn remove_document(&mut self, idx: PointOffsetType) -> bool {
+    fn remove_document(&mut self, idx: PointOffsetType) -> bool {
         if self.values_is_empty(idx) {
             return false; // Already removed or never actually existed
         }
@@ -436,21 +419,52 @@ impl ImmutableInvertedIndex {
         true
     }
 
-    pub fn values_is_empty(&self, point_id: PointOffsetType) -> bool {
+    fn filter(&self, query: &ParsedQuery) -> Box<dyn Iterator<Item = PointOffsetType> + '_> {
+        let postings_opt: Option<Vec<_>> = query
+            .tokens
+            .iter()
+            .map(|&vocab_idx| match vocab_idx {
+                None => None,
+                // if a ParsedQuery token was given an index, then it must exist in the vocabulary
+                // dictionary. Posting list entry can be None but it exists.
+                Some(idx) => self.postings.get(idx as usize).unwrap().as_ref(),
+            })
+            .collect();
+        if postings_opt.is_none() {
+            // There are unseen tokens -> no matches
+            return Box::new(vec![].into_iter());
+        }
+        let postings = postings_opt.unwrap();
+        if postings.is_empty() {
+            // Empty request -> no matches
+            return Box::new(vec![].into_iter());
+        }
+
+        // deleted documents are still in the postings
+        let filter = move |idx| {
+            matches!(
+                self.point_documents_tokens.get(idx as usize),
+                Some(Some(_))
+            )
+        };
+        intersect_postings_iterator(postings, filter)
+    }
+
+    fn values_is_empty(&self, point_id: PointOffsetType) -> bool {
         if self.point_documents_tokens.len() <= point_id as usize {
             return true;
         }
         self.point_documents_tokens[point_id as usize].is_none()
     }
 
-    pub fn values_count(&self, point_id: PointOffsetType) -> usize {
+    fn values_count(&self, point_id: PointOffsetType) -> usize {
         if self.point_documents_tokens.len() <= point_id as usize {
             return 0;
         }
         self.point_documents_tokens[point_id as usize].unwrap_or(0)
     }
 
-    pub fn check_match(&self, parsed_query: &ParsedQuery, point_id: PointOffsetType) -> bool {
+    fn check_match(&self, parsed_query: &ParsedQuery, point_id: PointOffsetType) -> bool {
         if parsed_query.tokens.contains(&None) {
             return false;
         }
