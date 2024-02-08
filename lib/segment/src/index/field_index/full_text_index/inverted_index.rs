@@ -516,12 +516,29 @@ impl ImmutableInvertedIndex {
 
 impl From<MutableInvertedIndex> for ImmutableInvertedIndex {
     fn from(index: MutableInvertedIndex) -> Self {
+        let original_size: usize = index
+            .postings
+            .iter()
+            .filter_map(|p| p.as_ref())
+            .map(|p| p.size())
+            .sum();
+        let postings: Vec<Option<CompressedPostingList>> = index
+            .postings
+            .into_iter()
+            .map(|x| x.map(CompressedPostingList::new))
+            .collect();
+        let compressed_size: usize = postings
+            .iter()
+            .filter_map(|p| p.as_ref())
+            .map(|p| p.size())
+            .sum();
+        log::error!(
+            "Compressed postings size: {} -> {}",
+            original_size,
+            compressed_size
+        );
         ImmutableInvertedIndex {
-            postings: index
-                .postings
-                .into_iter()
-                .map(|x| x.map(CompressedPostingList::new))
-                .collect(),
+            postings,
             vocab: index.vocab,
             point_documents_tokens: index
                 .point_to_docs
