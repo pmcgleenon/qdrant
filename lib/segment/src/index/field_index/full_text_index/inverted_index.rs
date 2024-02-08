@@ -304,11 +304,7 @@ pub struct MutableInvertedIndex {
 }
 
 impl MutableInvertedIndex {
-    fn index_document(
-        &mut self,
-        idx: PointOffsetType,
-        document: Document,
-    ) -> OperationResult<()> {
+    fn index_document(&mut self, idx: PointOffsetType, document: Document) -> OperationResult<()> {
         self.points_count += 1;
         if self.point_to_docs.len() <= idx as usize {
             self.point_to_docs
@@ -441,12 +437,8 @@ impl ImmutableInvertedIndex {
         }
 
         // deleted documents are still in the postings
-        let filter = move |idx| {
-            matches!(
-                self.point_documents_tokens.get(idx as usize),
-                Some(Some(_))
-            )
-        };
+        let filter =
+            move |idx| matches!(self.point_documents_tokens.get(idx as usize), Some(Some(_)));
         intersect_postings_iterator(postings, filter)
     }
 
