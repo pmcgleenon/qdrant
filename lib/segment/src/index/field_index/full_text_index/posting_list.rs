@@ -81,26 +81,21 @@ impl CompressedPostingList {
             .list
             .chunks_exact(bitpacking::BitPacker4x::BLOCK_LEN)
         {
-            let chunk_bits: u8 = bitpacker.num_bits(chunk);
-            let chunk_size = (chunk_bits as usize) * bitpacking::BitPacker4x::BLOCK_LEN / 8;
             let offset = chunk[0];
+            let chunk_bits: u8 = bitpacker.num_bits_sorted(offset, chunk);
+            let chunk_size = (chunk_bits as usize) * bitpacking::BitPacker4x::BLOCK_LEN / 8;
             let mut compressed_chunk = CompressedPostingChunk {
                 offset,
                 data: vec![0u8; chunk_size].into_boxed_slice(),
             };
-            bitpacker.compress_strictly_sorted(
-                Some(offset),
-                chunk,
-                &mut compressed_chunk.data,
-                chunk_bits,
-            );
+            bitpacker.compress_sorted(offset, chunk, &mut compressed_chunk.data, chunk_bits);
 
             // debug decompress check
             // todo: remove
             let chunk_bits = (compressed_chunk.data.len() * 8) / bitpacking::BitPacker4x::BLOCK_LEN;
             let mut decompressed = vec![0u32; bitpacking::BitPacker4x::BLOCK_LEN];
-            bitpacker.decompress_strictly_sorted(
-                Some(compressed_chunk.offset),
+            bitpacker.decompress_sorted(
+                compressed_chunk.offset,
                 &compressed_chunk.data,
                 &mut decompressed,
                 chunk_bits as u8,
@@ -141,8 +136,8 @@ impl CompressedPostingList {
             .flat_map(move |chunk| {
                 let chunk_bits = (chunk.data.len() * 8) / bitpacking::BitPacker4x::BLOCK_LEN;
                 let mut decompressed = vec![0u32; bitpacking::BitPacker4x::BLOCK_LEN];
-                bitpacker.decompress_strictly_sorted(
-                    Some(chunk.offset),
+                bitpacker.decompress_sorted(
+                    chunk.offset,
                     &chunk.data,
                     &mut decompressed,
                     chunk_bits as u8,
@@ -163,8 +158,8 @@ impl CompressedPostingList {
             .flat_map(move |chunk| {
                 let chunk_bits = (chunk.data.len() * 8) / bitpacking::BitPacker4x::BLOCK_LEN;
                 let mut decompressed = vec![0u32; bitpacking::BitPacker4x::BLOCK_LEN];
-                bitpacker.decompress_strictly_sorted(
-                    Some(chunk.offset),
+                bitpacker.decompress_sorted(
+                    chunk.offset,
                     &chunk.data,
                     &mut decompressed,
                     chunk_bits as u8,
@@ -173,5 +168,35 @@ impl CompressedPostingList {
             })
             .take(self.len as usize)
             .filter(move |doc_id| filter(*doc_id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compression() {
+        let mut chunk: Vec<u32> = Vec::new();
+        for i in 0..bitpacking::BitPacker4x::BLOCK_LEN as u32 {
+            chunk.push(1000 + 2 * i);
+        }
+        let initial = 1000;
+
+        let bitpacker = bitpacking::BitPacker4x::new();
+        let chunk_bits: u8 = bitpacker.num_bits_sorted(initial, &chunk);
+        let chunk_size = bitpacking::BitPacker4x::compressed_block_size(chunk_bits);
+        println!("BLOCK_SIZE: {}", bitpacking::BitPacker4x::BLOCK_LEN * 4);
+        println!("chunk_bits: {}", chunk_bits);
+        println!("chunk_size: {}", chunk_size);
+
+        let mut compressed_chunk = vec![0u8; chunk_size].into_boxed_slice();
+        let compressed_size =
+            bitpacker.compress_sorted(initial, &chunk, &mut compressed_chunk, chunk_bits);
+        println!("compressed_size: {}", compressed_size);
+
+        let mut decompressed = vec![0u32; bitpacking::BitPacker4x::BLOCK_LEN];
+        bitpacker.decompress_sorted(initial, &compressed_chunk, &mut decompressed, chunk_bits);
+        assert_eq!(decompressed, chunk);
     }
 }
