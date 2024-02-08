@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{cmp, fs, io};
 
+use api::grpc::qdrant::RecoveryPointClockTag;
 use serde::{Deserialize, Serialize};
 
 use crate::operations::types::CollectionError;
@@ -210,7 +211,11 @@ impl From<RecoveryPoint> for api::grpc::qdrant::RecoveryPoint {
             clocks: value
                 .clocks
                 .into_iter()
-                .map(|(key, tick)| ClockTag::new(key.peer_id, key.clock_id, tick).into())
+                .map(|(key, clock_tick)| RecoveryPointClockTag {
+                    peer_id: key.peer_id,
+                    clock_id: key.clock_id,
+                    clock_tick,
+                })
                 .collect(),
         }
     }
