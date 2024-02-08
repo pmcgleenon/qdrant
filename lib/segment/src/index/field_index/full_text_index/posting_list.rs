@@ -41,6 +41,10 @@ impl PostingList {
     ) -> impl Iterator<Item = PointOffsetType> + 'a {
         self.list.iter().copied().filter(move |&idx| filter(idx))
     }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.list.shrink_to_fit();
+    }
 }
 
 impl IntoIterator for PostingList {

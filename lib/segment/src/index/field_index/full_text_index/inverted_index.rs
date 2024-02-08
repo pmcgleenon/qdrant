@@ -480,7 +480,17 @@ impl ImmutableInvertedIndex {
 }
 
 impl From<MutableInvertedIndex> for ImmutableInvertedIndex {
-    fn from(index: MutableInvertedIndex) -> Self {
+    fn from(mut index: MutableInvertedIndex) -> Self {
+        index
+            .postings
+            .iter_mut()
+            .filter_map(|posting| posting.as_mut())
+            .for_each(|posting| {
+                posting.shrink_to_fit();
+            });
+        index.postings.shrink_to_fit();
+        index.vocab.shrink_to_fit();
+
         ImmutableInvertedIndex {
             postings: index.postings,
             vocab: index.vocab,
