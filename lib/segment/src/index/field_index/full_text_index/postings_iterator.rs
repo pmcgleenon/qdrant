@@ -33,7 +33,8 @@ pub fn intersect_compressed_postings_iterator<'a>(
     let smallest_posting = postings.remove(smallest_posting_idx);
 
     let and_iter = smallest_posting
-        .iter(filter)
+        .iter()
+        .filter(move |doc_id| filter(*doc_id))
         .filter(move |doc_id| postings.iter().all(|posting| posting.contains(doc_id)));
 
     Box::new(and_iter)

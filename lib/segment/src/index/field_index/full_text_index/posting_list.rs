@@ -148,10 +148,7 @@ impl CompressedPostingList {
             .any(|doc_id| doc_id == *val)
     }
 
-    pub fn iter<'a>(
-        &'a self,
-        filter: impl Fn(PointOffsetType) -> bool + 'a,
-    ) -> impl Iterator<Item = PointOffsetType> + 'a {
+    pub fn iter(&self) -> impl Iterator<Item = PointOffsetType> + '_ {
         let bitpacker = bitpacking::BitPacker4x::new();
         self.data
             .iter()
@@ -167,7 +164,6 @@ impl CompressedPostingList {
                 decompressed.into_iter()
             })
             .take(self.len as usize)
-            .filter(move |doc_id| filter(*doc_id))
     }
 }
 
